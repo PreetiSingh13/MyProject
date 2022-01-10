@@ -1,0 +1,214 @@
+@isTest()
+public class CPQ_OrderProcessorTest {
+    @testSetup static void setup() {
+        BCS_TestData.createdCustom_setting();
+        DM_Assignment__c dmAssignment = new DM_Assignment__c();
+        dmAssignment.Name = 'test name';
+        dmAssignment.CurrencyIsoCode = 'USD';
+        insert dmAssignment;
+        
+        Org_Constant_CS__c orgConst = new Org_Constant_CS__c(Name = 'External Id Prefix',CurrencyIsoCode = 'USD',Non_Production_Value__c='ciscosalescasevis',Production_Value__c='ciscosales');
+        insert orgConst;
+        
+        BCS_Integration__c p = new BCS_Integration__c();
+        p.Name = 'IntegrationUser';
+        p.Key__c = 'ng10Sep2017Q1';
+        insert p;
+        
+        Account acc = BCS_TestData.createAccount();
+        Territory2 testTerritory2 = [select id,Node_ID__c, Level_2_Territory__c from Territory2 Where Level_2_Territory__c='Americas' limit 1];
+        opportunity opp= new opportunity();
+        opp.Accountid = acc.id;
+        opp.DealId__c = '11223344552';
+        opp.Name= 'Opp1';
+        opp.StageName ='1 - Prospect';//4 - Agreement';
+        opp.CloseDate= System.today() + 50;
+        opp.Expected_Product__c=100.0;
+        opp.error_description__c='error';
+        opp.skipValidations__c = True;
+        opp.RecordTypeId = '0123000000003ykAAA';//'0123000000003yk';
+        opp.Opportunity_Owner_AM__c = userinfo.getuserid();
+        opp.OwnerId = userinfo.getuserid();
+        opp.Partner_Required__c = false;
+        opp.Deal_Id_Status__c ='1321';
+        opp.Competitors__c = 'Abacus';
+        opp.Opportunity_Status__c='Active';
+        opp.Position__c='US COMMERCIAL Dummy Territory';//'Americas lrpearso';
+        opp.CurrencyIsoCode = 'USD';
+        opp.Territory2Id = testTerritory2.Id;
+        opp.L2O_Flag__c = True;
+        opp.Theater__c='USA';
+        opp.Expected_Service__c = 100.0; 
+        
+        opportunity opp2= new opportunity();
+        opp2.Accountid = acc.id;
+        opp2.DealId__c = '1122334455';
+        opp2.Name= 'Opp2';
+        opp2.StageName ='1 - Prospect';//4 - Agreement';
+        opp2.CloseDate= System.today() + 50;
+        opp2.Expected_Product__c=100.0;
+        opp2.error_description__c='error';
+        opp2.skipValidations__c = True;
+        opp2.RecordTypeId = '0123000000003ykAAA';//'0123000000003yk';
+        opp2.Opportunity_Owner_AM__c = userinfo.getuserid();
+        opp2.OwnerId = userinfo.getuserid();
+        opp2.Partner_Required__c = false;
+        opp2.Deal_Id_Status__c ='1321';
+        opp2.Competitors__c = 'Abacus';
+        opp2.Opportunity_Status__c='Active';
+        opp2.Position__c='US COMMERCIAL Dummy Territory';//'Americas lrpearso';
+        opp2.CurrencyIsoCode = 'USD';
+        opp2.Territory2Id = testTerritory2.Id;
+        opp2.L2O_Flag__c = True;
+        opp2.Theater__c='USA';
+        opp2.Expected_Service__c = 100.0;
+
+        insert new list<opportunity>{opp,opp2};
+
+        
+
+        Id draftBCSRecordId1 = Schema.SObjectType.SBQQ__Quote__c.getRecordTypeInfosByDeveloperName().get('AAE_Draft_Quote').getRecordTypeId();
+            SBQQ__Quote__c bcsTestQuote1 = new SBQQ__Quote__c();
+            bcsTestQuote1.CPQ_Name__c = 'OrderProcessorTestQuote';
+            //bcsTestQuote1.Global_Opportunity__c = opp.id;
+            bcsTestQuote1.SBQQ__StartDate__c = Date.today();
+            bcsTestQuote1.SBQQ__EndDate__c = Date.today()+1;
+            bcsTestQuote1.CPQAST_Estimate_Type__c = System.Label.EstimateTypeBCS;
+            bcsTestQuote1.RecordTypeId = draftBCSRecordId1;
+            bcsTestQuote1.SBQQ__Opportunity2__c = opp.Id;
+            System.debug('quote opp' + opp.Id);
+            bcsTestQuote1.CPQ_Quote_Type__c = 'New Sale';
+            bcsTestQuote1.CPQ_Is_Air_Gapped_Required__c = false;
+            bcsTestQuote1.Deal_Id_Reference__c = '12345';
+            bcsTestQuote1.BCS_Order_ID__c = '1234567';
+            bcsTestQuote1.SBQQ__Status__c = 'Order';
+            bcsTestQuote1.ApprovalStatus__c = 'Approved';
+            bcsTestQuote1.DM_Assignment__c = dmAssignment.Id;
+            bcsTestQuote1.SBQQ__SubscriptionTerm__c = 12; 
+            bcsTestQuote1.CPQ_Subscription_Term__c = 12;
+            bcsTestQuote1.CPQ_Exchange__c = 2.5;
+            bcsTestQuote1.BCS_Justification__c = 'Justifying with a justification';
+            bcsTestQuote1.SBQQ__Primary__c = true;
+            bcsTestQuote1.CPQAST_Universal_Id__c = '1234';
+            bcsTestQuote1.CPQ_Theater__c = 'Americas';
+
+            SBQQ__Quote__c bcsTestQuote2 = new SBQQ__Quote__c();
+            bcsTestQuote2.CPQ_Name__c = 'OrderProcessorTestQuote';
+            //bcsTestQuote2.Global_Opportunity__c = opp2.id;
+            bcsTestQuote2.SBQQ__StartDate__c = Date.today();
+            bcsTestQuote2.SBQQ__EndDate__c = Date.today()+1;
+            bcsTestQuote2.CPQAST_Estimate_Type__c = System.Label.EstimateTypeBCS;
+            bcsTestQuote2.RecordTypeId = draftBCSRecordId1;
+            bcsTestQuote2.SBQQ__Opportunity2__c = opp2.Id;
+            bcsTestQuote2.CPQ_Quote_Type__c = 'Incremental Quote';
+            bcsTestQuote2.CPQ_Is_Air_Gapped_Required__c = false;
+            bcsTestQuote2.Deal_Id_Reference__c = '12345123';
+            bcsTestQuote2.BCS_Order_ID__c = '123009';
+            bcsTestQuote2.SBQQ__Status__c = 'Order';
+            bcsTestQuote2.ApprovalStatus__c = 'Approved';
+            bcsTestQuote2.DM_Assignment__c = dmAssignment.Id;
+            bcsTestQuote2.SBQQ__SubscriptionTerm__c = 12; 
+            bcsTestQuote2.CPQ_Subscription_Term__c = 12;
+            bcsTestQuote2.CPQ_Exchange__c = 2.5;
+            bcsTestQuote2.BCS_Justification__c = 'Justifying with a justification';
+            bcsTestQuote2.SBQQ__Primary__c = true;
+            bcsTestQuote2.CPQAST_Universal_Id__c = '1234222';
+            bcsTestQuote2.CPQ_Theater__c = 'Americas';
+
+            insert new list<sbqq__quote__c>{bcsTestQuote1,bcsTestQuote2};
+            System.debug('bcsTestQuote created'+bcsTestQuote1);
+
+            Product2 productBundleObj = new Product2();
+            productBundleObj.Name = 'Order Processor Test';
+            productBundleObj.IsActive = true;
+            insert productBundleObj;
+            
+            Pricebook2 createDefaultPB = new Pricebook2(name='default pricebook', isActive=true);
+            insert createDefaultPB; 
+            
+            PricebookEntry pbeTech = new PricebookEntry( Pricebook2Id = createDefaultPB.Id, Product2Id = productBundleObj.Id, UnitPrice = 10000, IsActive = true);
+            insert pbeTech;
+            
+            SBQQ__QuoteLine__c testQuoteLine = new SBQQ__QuoteLine__c(SBQQ__StartDate__c = Date.today(), SBQQ__Product__c = productBundleObj.Id, SBQQ__Quote__c = bcsTestQuote2.Id, CPQ_Displayed_List_Price__c = 10, CPQ_Displayed_Net_Price__c = 100, SBQQ__Quantity__c = 5, SBQQ__Bundle__c = True,SBQQ__Existing__c=false);
+            insert testQuoteLine;
+        
+        	Order order = new Order();
+            order.SBQQ__Quote__c = bcsTestQuote2.Id;
+            order.AccountId = opp2.AccountId;
+            order.EffectiveDate = system.today();
+            order.Status = 'Draft';
+            order.Pricebook2Id = Test.getStandardPricebookId();
+            order.CPQAST_Estimate_Type__c = 'EC';
+            order.CPQ_Quote_Type__c = 'Upsell/Change Request';
+            //insert order; 
+        
+        	Contract contract = new Contract();
+            contract.AccountId =  opp.AccountId;
+            contract.SBQQ__Quote__c = bcsTestQuote1.id;
+            contract.Status = 'Draft';
+            contract.CurrencyIsoCode = 'USD';
+            contract.CPQAST_Universal_Id__c= '1234';
+
+            Contract contract2 = new Contract();
+            contract2.AccountId =  opp.AccountId;
+            contract2.SBQQ__Quote__c = bcsTestQuote2.id;
+            contract2.Status = 'Draft';
+            contract2.CurrencyIsoCode = 'USD';
+            contract2.CPQAST_Universal_Id__c= '1234222';
+
+            insert new list<Contract> {contract,contract2};
+            
+    }
+
+    @istest 
+    private static void testNewSale(){
+        SBQQ__Quote__c quote = [select id from SBQQ__Quote__c where BCS_Order_ID__c='1234567'];
+        Opportunity opp = [select id,accountId from Opportunity limit 1];
+        List<Order> orderlist =new List<Order>();
+        Order order = new Order();
+        order.SBQQ__Quote__c = quote.Id;
+        order.AccountId = opp.AccountId;
+        order.EffectiveDate = system.today();
+        order.Status = 'Draft';
+        order.Pricebook2Id = Test.getStandardPricebookId();
+        order.CPQAST_Estimate_Type__c = 'BCS';
+        order.CPQ_Quote_Type__c = 'New Sale';
+        orderlist.add(order);
+        insert orderlist; 
+
+        Test.startTest();
+        CPQ_OrderProcessor opb =new CPQ_OrderProcessor();
+        Database.executeBatch(opb);
+        Test.stopTest();
+    }
+
+    @istest 
+    private static void testIncremental(){
+        SBQQ__Quote__c quote = [select id from SBQQ__Quote__c where BCS_Order_ID__c='123009'];
+        Opportunity opp = [select id,accountId from Opportunity limit 1];
+        Order order = new Order();
+        order.SBQQ__Quote__c = quote.Id;
+        order.AccountId = opp.AccountId;
+        order.EffectiveDate = system.today();
+        order.Status = 'Draft';
+        order.Pricebook2Id = Test.getStandardPricebookId();
+        order.CPQAST_Estimate_Type__c = 'BCS';
+        order.CPQ_Quote_Type__c = 'Incremental Quote';
+        insert order; 
+
+        Test.startTest();
+        CPQ_OrderProcessor opb =new CPQ_OrderProcessor();
+        Database.executeBatch(opb);
+        Test.stopTest();
+    }
+   
+    @istest 
+    private static void testscheduler(){
+        Test.startTest();
+        //System.schedule('CPQ_OrderProcessor', '0 0 * * * ?', new CPQ_OrderProcessorScheduler());
+        SchedulableContext sc = null;
+        CPQ_OrderProcessorScheduler op = new CPQ_OrderProcessorScheduler();
+        op.execute(sc);
+        Test.stopTest();
+    }
+}

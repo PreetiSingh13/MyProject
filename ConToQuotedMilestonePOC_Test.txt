@@ -1,0 +1,297 @@
+@isTest(seeAllData=false)
+public with sharing class ConToQuotedMilestonePOC_Test {
+        private static User usr;
+   		
+        static testmethod void setupData(){
+      	
+        Profile profile = [SELECT Id FROM Profile WHERE Name='Cisco_Admin'];
+         usr = new User(Alias = 'newUser', Email='newuser9@testorg.com',
+         EmailEncodingKey='UTF-8', LastName='Testing', LanguageLocaleKey='en_US',
+         LocaleSidKey='en_US', ProfileId = profile.Id,Theatre__c='Americas-Canada',
+         TimeZoneSidKey='America/Los_Angeles', UserName='newuser9@cisco.com');
+        insert usr;
+        System.debug('User>>>'+usr);
+        
+        
+        Id permissionSetId = [SELECT Id FROM PermissionSetLicense WHERE MasterLabel = 'Salesforce CPQ License'].Id;
+ 		// Assign permission set to User
+		insert new PermissionSetLicenseAssign(AssigneeId = usr.id, PermissionSetLicenseId = permissionSetId);
+        PermissionSet ps=[SELECT Id FROM PermissionSet WHERE Name='CiscoSteelBrickCPQAdmin'];
+        insert new PermissionSetAssignment(AssigneeId=usr.id, PermissionSetId=ps.Id);
+        System.runAs(usr){
+            BCS_TestData.createdCustom_setting();
+            CPQAST_Test_Data_Factory.createTriggerControlCustomSetting('CPQAST_Quote_Line_Trigger');
+        	CPQAST_Test_Data_Factory.createTriggerControlCustomSetting('CPQAST_MD_Trigger');       
+        	CPQAST_Test_Data_Factory.createIntegrationCustomSetting(); 
+            DM_Assignment__c dmAssignment = new DM_Assignment__c();
+            dmAssignment.Name = 'test name';
+            //dmAssignment.CurrencyIsoCode = 'USD';
+            insert dmAssignment;
+            
+            Opportunity opp  = BCS_TestData.createOpportunity();
+            System.debug('Opty created'+opp);
+            
+            BCS_Integration__c p = new BCS_Integration__c();
+            p.Name = 'IntegrationUser';
+            p.Key__c = 'ng10Sep2017Q1';
+            insert p;
+            
+            Id draftBCSRecordId = Schema.SObjectType.SBQQ__Quote__c.getRecordTypeInfosByDeveloperName().get('AAE_Draft_Quote').getRecordTypeId();
+            SBQQ__Quote__c bcsTestQuote = new SBQQ__Quote__c();
+            bcsTestQuote.CPQ_Name__c = 'TriggerTestClassNewSale';
+            bcsTestQuote.SBQQ__StartDate__c = Date.today();
+            bcsTestQuote.SBQQ__EndDate__c = Date.today()+1;
+            bcsTestQuote.CPQAST_Estimate_Type__c = System.Label.EstimateTypeBCS;
+            bcsTestQuote.RecordTypeId = draftBCSRecordId;
+            bcsTestQuote.SBQQ__Opportunity2__c = opp.Id;
+            bcsTestQuote.CPQ_Quote_Type__c = 'Upsell/Change Request';
+            bcsTestQuote.CPQ_Is_Air_Gapped_Required__c = false;
+            bcsTestQuote.Deal_Id_Reference__c = '12345';
+            bcsTestQuote.BCS_Order_ID__c = '1234567';
+            //bcsTestQuote.CPQ_Primary_Quote__c = TRUE;
+            bcsTestQuote.SBQQ__Status__c = 'Draft';
+            bcsTestQuote.ApprovalStatus__c = 'Approved';
+            bcsTestQuote.DM_Assignment__c = dmAssignment.Id;
+            bcsTestQuote.Proposal_Order_Id__c = '123456';
+           // bcsTestQuote.CCW_Quote_Object_Id__c = '10057895087';
+            bcsTestQuote.SBQQ__SubscriptionTerm__c = 12; 
+            bcsTestQuote.CPQ_Subscription_Term__c = 12;
+            bcsTestQuote.CPQ_Exchange__c = 2.5;
+            bcsTestQuote.BCS_Justification__c = 'this is something in justification';
+            //bcsTestQuote.SBQQ__Primary__c = true;
+            bcsTestQuote.CPQ_Theater__c = 'Americas';
+            insert bcsTestQuote;
+            System.debug('bcsTestQuote created'+bcsTestQuote);
+            
+            Contract cont = new Contract();
+            cont.AccountId =  opp.AccountId;
+            cont.Status = 'Draft';
+            cont.CurrencyIsoCode = 'USD';
+            cont.CPQAST_Universal_Id__c= '1234';
+            cont.SBQQ__Quote__c = bcsTestQuote.Id;
+            cont.CPQ_Contract_Start_Date__c = Date.today(); 
+            cont.CPQ_Contract_End_Date__c = Date.today()+364;         
+            insert cont;
+			
+	    Product2 productBundleObj = new Product2();
+        productBundleObj.Name = 'Collaboration Custom Solution';
+        productBundleObj.CPQAST_Solution__c = 'User Specified Solution';
+        productBundleObj.CPQAST_Technology__c = 'NA'; 
+        productBundleObj.CPQAST_CX_Product__c = 'Plan and Design';
+        productBundleObj.CPQAST_Solution__c = 'User Specified Solution';
+        productBundleObj.IsActive = true;
+        insert productBundleObj;
+        system.debug('product bundle created method 1-->'+productBundleObj);
+            
+            Pricebook2 createDefaultPB = new Pricebook2(name='default pricebook', isActive=true);
+            insert createDefaultPB; 
+            
+            PricebookEntry pbeTech = new PricebookEntry( Pricebook2Id = createDefaultPB.Id, Product2Id = productBundleObj.Id, UnitPrice = 10000, IsActive = true);
+            insert pbeTech;
+            
+            SBQQ__Subscription__c subs = new SBQQ__Subscription__c();
+            subs.SBQQ__Account__c =  opp.AccountId;
+            subs.SBQQ__Contract__c = cont.Id;
+            subs.SBQQ__Product__c = productBundleObj.Id;
+            subs.SBQQ__Quantity__c = 1;
+            insert subs;
+            
+            for(SBQQ__Subscription__c sub:[SELECT Id, CPQ_Contract_Start_Date__c, CPQ_Contract_End_Date__c FROM SBQQ__Subscription__c WHERE SBQQ__Contract__c =:cont.Id]){
+                sub.CPQ_Contract_Start_Date__c = Date.today()-1; 
+                sub.CPQ_Contract_End_Date__c = Date.today()+365;
+                update sub;
+            }
+            List<SBQQ__Subscription__c> SubList = new List<SBQQ__Subscription__c>(); 
+        }
+        }
+    
+    
+      @isTest 
+      static void contractToQuoteMilestoneTest(){
+          	Org_Constant_CS__c orgConst = new Org_Constant_CS__c(Name = 'External Id Prefix',CurrencyIsoCode = 'USD',Non_Production_Value__c='ciscosalescasevis',Production_Value__c='ciscosales');
+			
+          	insert orgConst;
+            Utilities.setIsTestMethod(true);
+            Utilities.setValidationSkip(true);
+            Utilities.setSkipOpportunityTiggers(true);
+          
+            BCS_TestData.createdCustom_setting();
+                
+            Opportunity opp  = BCS_TestData.createOpportunity();
+                
+            Map<Id, String> contractAndCurrencyMap = new Map<Id, String>();
+            Map<Id, Decimal> contractAndDiscountMap = new Map<Id, Decimal>();
+            Map<String, Contract> UIDContractMap = new Map<String, Contract>();
+            
+          
+            DM_Assignment__c dmAssignment = new DM_Assignment__c();
+            dmAssignment.Name = 'test name';
+            dmAssignment.CurrencyIsoCode = 'USD';
+            insert dmAssignment;
+        	
+        	Id orderRecordId = Schema.SObjectType.SBQQ__Quote__c.getRecordTypeInfosByDeveloperName().get('CPQAST_SOW_Based_Order').getRecordTypeId();                
+                
+            Id RecordTypeIdAccount = Schema.SObjectType.Account.getRecordTypeInfosByName().get('End-User').getRecordTypeId();    
+            system.debug('**Record Type'+RecordTypeIdAccount);
+            account testParentAccount = new account(Name = 'Test Parent Account', recordtypeid=RecordTypeIdAccount);
+            insert testParentAccount;
+            
+            account testAccount = new account(Name = 'Test Account', recordtypeid=RecordTypeIdAccount, ParentId=testParentAccount.Id);
+            insert testAccount;
+                
+          Test.startTest();
+          
+            List<SBQQ__Quote__c> lquote = new List<SBQQ__Quote__c>();
+        	SBQQ__Quote__c ASTQuote = new SBQQ__Quote__c(SBQQ__StartDate__c = Date.today(),
+                                                           SBQQ__EndDate__c = Date.today()+1,
+                                                           SBQQ__Opportunity2__c = opp.Id,
+                                                          CPQ_Primary_Quote__c = true,
+            												SBQQ__Primary__c = true,
+                                                           BCS_Order_ID__c = '1234567',
+                                                           CPQAST_Estimate_Type__c = 'AST',
+                                                           CPQ_Quote_Type__c = 'Upsell/Change Request',
+                                                           RecordTypeId = orderRecordId,
+                                                           Proposal_Order_Id__c = '123',
+                                                           SBQQ__Status__c = 'Order',
+                                                           //ApprovalStatus__c = 'Approved',
+                                                           DM_Assignment__c = dmAssignment.Id,
+                                                           CPQ_Theater__c = 'Americas',
+                                                           CCW_Quote_Object_Id__c = '10057895087',
+                                                           CPQ_Subscription_Term__c = 12,
+                                                           SBQQ__SubscriptionTerm__c = 12,
+                                                           CPQAST_Universal_Id__c= '1234',
+                                                           CPQ_Original_Universal_ID__c='1234');
+        	insert ASTQuote; 
+        	lquote.add(ASTQuote);
+
+                
+            Contract cont = new Contract();
+            cont.AccountId =  testAccount.Id;
+            cont.SBQQ__Quote__c = lquote[0].Id;
+            cont.Status = 'Draft';
+            cont.CurrencyIsoCode = 'USD';
+            cont.CPQAST_Universal_Id__c= '1234';
+        	insert cont;
+        	system.debug('contract created-->'+cont);
+          
+       List<String> uids=new List<String>();
+       uids.add('1234');
+          
+       List<Contract> contracttoiterate = [Select id,SBQQ__Quote__c,CPQAST_Universal_Id__c from Contract where CPQAST_Universal_Id__c IN:uids];
+       System.debug('contractIterated-->' +contracttoiterate);
+       UIDContractMap.put(contracttoiterate[0].SBQQ__Quote__c,contracttoiterate[0]);
+                
+        Product2 productBundleObj = new Product2();
+        productBundleObj.Name = 'Collaboration Custom Solution';
+        productBundleObj.CPQAST_Solution__c = 'User Specified Solution';
+        productBundleObj.CPQAST_Technology__c = 'NA'; 
+        productBundleObj.CPQAST_CX_Product__c = 'Plan and Design';
+        productBundleObj.CPQAST_Solution__c = 'User Specified Solution';
+        productBundleObj.IsActive = true;
+        insert productBundleObj;
+        system.debug('product bundle created-->'+productBundleObj);
+                
+            SBQQ__Subscription__c subscriptionObj = new SBQQ__Subscription__c();
+            subscriptionObj.CPQ_Parent_SKU__c = 'CON-SNT-CSPC2206';
+            subscriptionObj.CPQ_Architecture__c = 'ALL';
+            subscriptionObj.SBQQ__Product__c = productBundleObj.Id;
+            subscriptionObj.SBQQ__Contract__c = cont.Id;
+            subscriptionObj.CPQ_Deliverable_Calculated_Quantity_UI__c = 10;
+            subscriptionObj.SBQQ__UnitCost__c = 100;
+            subscriptionObj.CPQ_Displayed_List_Price__c = 10;
+            subscriptionObj.CPQ_Displayed_Net_Price__c = 100;
+            subscriptionObj.Package_Total_Cost_Budget__c = 100;
+            subscriptionObj.SBQQ__ListPrice__c = 10;
+            subscriptionObj.SBQQ__Quantity__c = 5;
+            subscriptionObj.CPQ_Blended_Labor_Rate__c = 100;
+            subscriptionObj.CurrencyIsoCode = 'USD';
+            subscriptionObj.CPQ_Subscription_Term__c = 12;
+            insert subscriptionObj;
+          
+           contractAndCurrencyMap.put(subscriptionObj.SBQQ__Contract__c, 'USD');
+           contractAndDiscountMap.put(subscriptionObj.SBQQ__Contract__c, 0);
+           
+          
+          List<CPQAST_Contract_Milestone__c> cmList=new List<CPQAST_Contract_Milestone__c>();
+            CPQAST_Contract_Milestone__c ContractMilestoneObj = new CPQAST_Contract_Milestone__c();
+            ContractMilestoneObj.CPQAST_Milestone_Name__c = 'Custom Milestone';
+            ContractMilestoneObj.CPQAST_Type__c = 'Predefined';
+            ContractMilestoneObj.CPQAST_Description__c = 'Test Description';
+            ContractMilestoneObj.CPQAST_Contract__c = contracttoiterate[0].Id;
+            contractMilestoneObj.CurrencyIsoCode = contractAndCurrencyMap.get(contracttoiterate[0].Id);
+            contractMilestoneObj.CPQAST_Milestone_Discount__c = contractAndDiscountMap.get(contracttoiterate[0].Id);
+            cmList.add(contractMilestoneObj);
+        	insert cmList;
+        	system.debug('ContractMilestoneObj created-->'+cmList);
+        
+          
+          List<CPQAST_Contract_Milestone_Deliverable__c> cmdList=new List<CPQAST_Contract_Milestone_Deliverable__c>();
+        	CPQAST_Contract_Milestone_Deliverable__c deliverableObj = new CPQAST_Contract_Milestone_Deliverable__c();
+            deliverableObj.CPQAST_Subscription__c = subscriptionObj.Id;
+        	deliverableObj.CPQAST_Is_Associated__c = true;
+            deliverableObj.CPQAST_Milestone_Deliverable_Allocation__c = 100;
+            deliverableObj.CurrencyIsoCode = contractAndCurrencyMap.get(cont.Id);
+            deliverableObj.CPQAST_Contract_Milestone__c= contractMilestoneObj.Id;           
+            cmdList.add(deliverableObj);
+            insert cmdList;
+            system.debug('CPQAST_Contract_Milestone_Deliverable__c created-->'+deliverableObj);
+        	
+          
+          List<CPQAST_Contract_Deliverable_Resource__c> cdrList =new List<CPQAST_Contract_Deliverable_Resource__c>();
+        	CPQAST_Contract_Deliverable_Resource__c createresource = new CPQAST_Contract_Deliverable_Resource__c(); 
+            createresource.CPQAST_Contract_Milestone_Deliverable__c = cmdList[0].Id;
+           	createresource.Subscription__c = subscriptionObj.Id;
+            cdrList.add(createresource);
+        	insert cdrList;
+            system.debug('CPQAST_Contract_Deliverable_Resource__c created-->'+createresource);
+          
+          
+           List<CPQAST_Quote_Milestone__c> quoteMilestonesToInsertList = new List<CPQAST_Quote_Milestone__c>();
+            CPQAST_Quote_Milestone__c quoteMilestoneObj = new CPQAST_Quote_Milestone__c();
+            quoteMilestoneObj.CPQAST_Milestone_Name__c = cmList[0].CPQAST_Milestone_Name__c;
+            quoteMilestoneObj.CPQAST_Description__c = cmList[0].CPQAST_Description__c;
+            quoteMilestoneObj.CPQAST_Type__c =cmList[0].CPQAST_Type__c  ;
+            quoteMilestoneObj.CPQAST_Contract_Milestone__c=cmList[0].Id;          
+            quoteMilestoneObj.CPQAST_Milestone_Discount__c = cmList[0].CPQAST_Milestone_Discount__c;
+            quoteMilestoneObj.CPQAST_Quote__c = lquote[0].Id;
+            quoteMilestonesToInsertList.add(quoteMilestoneObj);
+        	insert quoteMilestonesToInsertList;
+        system.debug('Quote Milestone created'+quoteMilestoneObj);
+          
+          
+           Map<Id, Id> ContractMSQuoteMS = new Map<Id, Id>();
+           for(CPQAST_Quote_Milestone__c l_QL : quoteMilestonesToInsertList){
+                ContractMSQuoteMS.put(l_QL.CPQAST_Contract_Milestone__c,l_QL.Id);
+               }
+         
+          CPQAST_Milestone_Deliverable__c deliverableMObj = new CPQAST_Milestone_Deliverable__c();
+          deliverableMObj.CPQAST_Contract_Milestone_Deliverable__c = cmdList[0].Id; // Do we need to create lookup to contract Milestone Deliverable
+          deliverableMObj.CPQAST_Quote_Line__c = cmdList[0].CPQAST_Subscription__r.SBQQ__QuoteLine__c;
+          deliverableMObj.CPQAST_Quote_Milestone__c = ContractMSQuoteMS.get(cmdList[0].CPQAST_Contract_Milestone__c);
+       	  insert deliverableMObj;   	
+          List<CPQAST_Milestone_Deliverable__c> MDlist = new List<CPQAST_Milestone_Deliverable__c>();
+          MDlist.add(deliverableMObj);
+          
+          Map<Id, Id> SubscriptionMilestoneD_Map = new Map<Id,Id>();      
+      for(CPQAST_Contract_Milestone_Deliverable__c cmdinserted : cmdList){
+           SubscriptionMilestoneD_Map.put(cmdinserted.CPQAST_Subscription__c,cmdinserted.CPQAST_Milestone_Deliverable__c);
+          }
+          
+          
+          CPQAST_Deliverable_Resource__c createdelresource = new CPQAST_Deliverable_Resource__c(); 
+               createdelresource.CPQAST_Contract_Deliverable_Resource__c = cdrList[0].Id;
+               createdelresource.CPQ_QuoteLine__c = cdrList[0].Subscription__r.SBQQ__QuoteLine__c;
+               createdelresource.CPQAST_Milestone_Deliverable__c = SubscriptionMilestoneD_Map.get(cdrList[0].Subscription__c);
+               insert createdelresource;
+          List<CPQAST_Deliverable_Resource__c> DRList = new List<CPQAST_Deliverable_Resource__c>();
+          DRList.add(createdelresource);
+          
+          
+         ConToQuotedMilestonePOC.contractToQuoteMilestone(lquote);
+          
+          Test.stopTest();
+          System.assertEquals(1, DRList.size());
+          System.assertEquals(1, MDlist.size());
+          System.assertEquals(1, quoteMilestonesToInsertList.size());
+            }
+}

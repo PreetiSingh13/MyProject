@@ -1,0 +1,293 @@
+/* Name - CPQ_OrderProcessor
+ * Description - This class is used to process Draft Orders. Prior to this batch that processing was * happening in Order Trigger.
+ * author - adebadutta@deloitte.com
+ */
+public with sharing class CPQ_OrderProcessor implements Database.Batchable<sObject>, Database.Stateful {
+    
+    public string query; //the variable is used to hold the query that can be passed to the batch if batch needs to run for specific Order Ids
+    public Set<String> s_exceptionLogIds = new Set<String>();//used to gather the exception Ids and send email in case of failures
+
+    public CPQ_OrderProcessor() {}
+
+    public CPQ_OrderProcessor(String query) {
+        this.query = query;
+    }
+
+    public Database.QueryLocator start(Database.BatchableContext BC){
+        if(this.query != null){
+            return Database.getQueryLocator(this.query);
+        }
+        else{
+            return Database.getQueryLocator('SELECT Status, SBQQ__Quote__c, CPQ_Order_Products_Count__c, CPQAST_Estimate_Type__c,Id, CPQ_Quote_Type__c, CPQAST_Universal_Id__c, BCPQIB_Advanced_Threat__c, BCPQIB_Application_Centric_Infra__c, BCPQIB_Cloud_Meetings_and_Messaging__c, BCPQIB_Computing_Systems__c, BCPQIB_Customer_Care__c, BCPQIB_Data_Center_Switching__c, Base_IB_Data_File_Link__c, BCPQIB_DataCenter_Orchestration_Auto__c, BCPQIB_Hosted_Collaboration_Solution__c, BCPQIB_Mobility_Policy_and_Access__c, BCPQIB_Network_Management_Orchestration__c, BCPQIB_Network_Security__c, BCPQIB_Next_Gen_Cable_Access__c, BCPQIB_Optical_Networking__c, BCPQIB_Packet_Core__c, BCPQIB_Routing_and_Switching__c, BCPQIB_Security_Cloud__c, BCPQIB_Security_Policy_and_Access__c, BCPQIB_Storage_Area_Networking__c, BCPQIB_Tetration__c, BCPQIB_Unified_Communications__c, BCPQIB_Video_Collaboration__c, BCPQIB_Wireless_Networking__c, BCPQ_IB_Collaboration__c, BCPQ_IB_Core_Networking__c, BCPQ_IB_Data_Center__c, BCPQ_IB_Security__c, BCPQ_IB_SP_Mobility__c, CPQ_IB_Advanced_Threat__c, CPQ_IB_Application_Centric_Infra__c, CPQ_IB_Cloud_Meetings_and_Messaging__c, CPQ_IB_Computing_Systems__c, CPQ_IB_Customer_Care__c, CPQ_IB_Data_Center_Orchestration_Auto__c, CPQ_IB_Data_Center_Switching__c, CPQ_IB_Hosted_Collaboration_Solution__c, CPQ_IB_Mobility_Policy_and_Access__c, CPQ_IB_Network_Management_Orchestration__c, CPQ_IB_Network_Security__c, CPQ_IB_Next_Gen_Cable_Access__c, CPQ_IB_Optical_Networking__c, CPQ_IB_Packet_Core__c, CPQ_IB_Routing_and_Switching__c, CPQ_IB_Security_Cloud__c, CPQ_IB_Security_Policy_and_Access__c, CPQ_IB_Storage_Area_Networking__c, CPQ_IB_Tetration__c, CPQ_IB_Unified_Communications__c, CPQ_IB_Video_Collaboration__c, CPQ_IB_Wireless_Networking__c, CPQ_IB_Collaboration__c, CPQ_IB_Core_Networking__c, CPQ_IB_Data_Center__c, CPQ_IB_Security__c, CPQ_IB_SP_Mobility__c FROM Order WHERE Status = \'Draft\' AND SBQQ__Quote__c <> null AND  CPQ_Order_Products_Count__c >0 ');
+        }
+    }
+
+    public void execute(Database.BatchableContext BC, List<sObject> scope){
+        //get list of fields to copy from Quote to Contract
+        Set < String > s_fieldsToCopy = CPQ_OrderProcessorHelper.getFieldsToCopy();
+        //get list of fields to copy from Quote to Contract
+        List < Quote_IB_field__mdt > quoteIBFields = [SELECT Id, Name__c FROM Quote_IB_field__mdt];
+        
+        //typecast the scope to list of orders
+        List<Order> l_allorders = (List<Order>)scope;
+
+        //get the Quote details of the Quote on Order
+        Set < Id > quoteSet = new Set < Id > ();
+        for (Order o: l_allorders) {
+          quoteSet.add(o.SBQQ__Quote__c);
+        }
+
+        system.debug('quoteSet-->'+quoteSet);
+
+        //create map of Quote Id and Line Item count of Quote
+        Map < Id, Decimal > quoteLineItemCount = new Map < Id, Decimal > ();
+        if(quoteSet.size() > 0){
+            system.debug('inside quoteset size > 0 -->');
+            for (SBQQ__Quote__c obj: [select Id, SBQQ__LineItemCount__c from SBQQ__Quote__c where Id in: quoteSet]) {
+                quoteLineItemCount.put(obj.Id, obj.SBQQ__LineItemCount__c);
+            }
+            system.debug('quoteLineItemCount > 0 -->'+quoteLineItemCount);
+        }
+
+        //create lists needed for processing
+        Set<id> s_quoteIdsForIncremental = new Set<id>();                                                                                                                                      
+        list<order> l_ordersForIncreQt = new list<order>(); //Order for Incremental Quote - to be used to update the Contract from Quote
+        list<order> list_ordersRenewal = new List<order>(); //US585143 : Order for Renewal Quote - to be used to update the renewed Contract from quote's Original pID
+        for(Order o : l_allorders){ 
+            system.debug('o.CPQ_Order_Products_Count__c-->'+o.CPQ_Order_Products_Count__c);
+            system.debug('o.CPQAST_Estimate_Type__c-->'+o.CPQAST_Estimate_Type__c);
+            system.debug('quoteLineItemCount.get(o.SBQQ__Quote__c)'+quoteLineItemCount.get(o.SBQQ__Quote__c));
+            system.debug('o.CPQ_Order_Products_Count__c'+o.CPQ_Order_Products_Count__c);
+            system.debug(quoteLineItemCount.get(o.SBQQ__Quote__c) == o.CPQ_Order_Products_Count__c);
+            if ((((o.CPQAST_Estimate_Type__c != 'EC' && quoteLineItemCount.containsKey(o.SBQQ__Quote__c) && quoteLineItemCount.get(o.SBQQ__Quote__c) == o.CPQ_Order_Products_Count__c) || (o.CPQAST_Estimate_Type__c == 'EC'))||Test.isRunningTest()) && o.Status != 'Activated' && (o.CPQAST_Estimate_Type__c == 'AST' || o.CPQAST_Estimate_Type__c == 'BCS' || (o.CPQAST_Estimate_Type__c == 'EC' ))) { // && o.CPQ_Quote_Type__c != 'Incremental Quote' --> who added?
+                o.Status = 'Activated';    
+                system.debug('inside if 1-->');
+                if(o.CPQ_Quote_Type__c == 'New Sale' || o.CPQ_Quote_Type__c == 'Renewal' || o.CPQ_Quote_Type__c == 'Short Term Renewal'|| (o.CPQ_Quote_Type__c == 'Upsell/Change Request'&& o.CPQAST_Estimate_Type__c == 'AST')){ //Added Upsell/Change request for AST as a part of US593110 - AST CR Contract Creation   
+                    o.SBQQ__Contracted__c = true;
+                    system.debug('inside if 2-->');
+                    list_ordersRenewal.add(o);                         
+                }
+                else if(o.CPQAST_Estimate_Type__c != 'AST'){
+                    if(o.SBQQ__Quote__c != null){
+                        s_quoteIdsForIncremental.add(o.SBQQ__Quote__c);
+                        l_ordersForIncreQt.add(o);
+                    }
+                }
+            }    
+        }
+        system.debug(list_ordersRenewal);                                
+        //update the order
+        try{
+            update l_allorders;
+        }
+        catch(Exception e){
+            system.debug('Exception during updating Order'+e);
+            String ex_id = CPQ_OrderProcessorHelper.insertExceptionLog('CPQ_OrderProcessor',e.getMessage());
+            String stack_trace = e.getStackTraceString();
+            s_exceptionLogIds.add(ex_Id);
+            s_exceptionLogIds.add(stack_trace);
+        }
+
+        //Shalini-24_11 : Added as part of US571366 : Calling ASTOrderHelper.CreateASTContract, to create AST-NewSale Order OrderLines, Contract and Subscriptions
+        ASTOrderHelper.CreateASTContract(l_allorders);
+        
+        //in case there are any Orders on incremental quotes we need to (1) create the subscriptions and (2) update field on the Contract
+        Map < Id, SBQQ__Quote__c > mp_IncremetnalQuotes = new Map< Id, SBQQ__Quote__c>();// Map of incremental quote id and quote
+        Map < String, Contract > mp_uniId_conDets = new Map < String, Contract >(); //map of universal Id and Contract of the Incremental Quote
+        Map<String, SBQQ__Quote__c> mp_uniId_quote = new Map<String, SBQQ__Quote__C>();
+        if(s_quoteIdsForIncremental.size() > 0){
+            //get the quote details
+            mp_IncremetnalQuotes = new Map< Id, SBQQ__Quote__c> ([SELECT Id, SBQQ__Account__c, CPQ_Quote_Type__c, CPQAST_Universal_Id__c, BCPQIB_Advanced_Threat__c, BCPQIB_Application_Centric_Infra__c, BCPQIB_Cloud_Meetings_and_Messaging__c, BCPQIB_Computing_Systems__c, BCPQIB_Customer_Care__c, BCPQIB_Data_Center_Switching__c, Base_IB_Data_File_Link__c, BCPQIB_DataCenter_Orchestration_Auto__c, BCPQIB_Hosted_Collaboration_Solution__c, BCPQIB_Mobility_Policy_and_Access__c, BCPQIB_Network_Management_Orchestration__c, BCPQIB_Network_Security__c, BCPQIB_Next_Gen_Cable_Access__c, BCPQIB_Optical_Networking__c, BCPQIB_Packet_Core__c, BCPQIB_Routing_and_Switching__c, BCPQIB_Security_Cloud__c, BCPQIB_Security_Policy_and_Access__c, BCPQIB_Storage_Area_Networking__c, BCPQIB_Tetration__c, BCPQIB_Unified_Communications__c, BCPQIB_Video_Collaboration__c, BCPQIB_Wireless_Networking__c, BCPQ_IB_Collaboration__c, BCPQ_IB_Core_Networking__c, BCPQ_IB_Data_Center__c, BCPQ_IB_Security__c, BCPQ_IB_SP_Mobility__c, CPQ_IB_Advanced_Threat__c, CPQ_IB_Application_Centric_Infra__c, CPQ_IB_Cloud_Meetings_and_Messaging__c, CPQ_IB_Computing_Systems__c, CPQ_IB_Customer_Care__c, CPQ_IB_Data_Center_Orchestration_Auto__c, CPQ_IB_Data_Center_Switching__c, CPQ_IB_Hosted_Collaboration_Solution__c, CPQ_IB_Mobility_Policy_and_Access__c, CPQ_IB_Network_Management_Orchestration__c, CPQ_IB_Network_Security__c, CPQ_IB_Next_Gen_Cable_Access__c, CPQ_IB_Optical_Networking__c, CPQ_IB_Packet_Core__c, CPQ_IB_Routing_and_Switching__c, CPQ_IB_Security_Cloud__c, CPQ_IB_Security_Policy_and_Access__c, CPQ_IB_Storage_Area_Networking__c, CPQ_IB_Tetration__c, CPQ_IB_Unified_Communications__c, CPQ_IB_Video_Collaboration__c, CPQ_IB_Wireless_Networking__c, CPQ_IB_Collaboration__c, CPQ_IB_Core_Networking__c, CPQ_IB_Data_Center__c, CPQ_IB_Security__c, CPQ_IB_SP_Mobility__c FROM SBQQ__Quote__c where Id in: s_quoteIdsForIncremental]);
+
+            //get the contract details based on the quote Id
+            Set < String > s_contractUIds = new Set < String > ();
+            if(!mp_IncremetnalQuotes.isEmpty()){
+                for (SBQQ__Quote__c q: mp_IncremetnalQuotes.values()) {
+                    if(q.CPQAST_Universal_Id__c != null){
+                        s_contractUIds.add(q.CPQAST_Universal_Id__c);
+                        mp_uniId_quote.put(q.CPQAST_Universal_Id__c,q);
+                    }
+                }
+                if(s_contractUIds.size() > 0){
+                    List < Contract > l_contractDets = [SELECT Id,CPQAST_Universal_Id__c , BCPQIB_Advanced_Threat__c, BCPQIB_Application_Centric_Infra__c, BCPQIB_Cloud_Meetings_and_Messaging__c, BCPQIB_Computing_Systems__c, BCPQIB_Customer_Care__c, BCPQIB_Data_Center_Switching__c, Base_IB_Data_File_Link__c, BCPQIB_DataCenter_Orchestration_Auto__c, BCPQIB_Hosted_Collaboration_Solution__c, BCPQIB_Mobility_Policy_and_Access__c, BCPQIB_Network_Management_Orchestration__c, BCPQIB_Network_Security__c, BCPQIB_Next_Gen_Cable_Access__c, BCPQIB_Optical_Networking__c, BCPQIB_Packet_Core__c, BCPQIB_Routing_and_Switching__c, BCPQIB_Security_Cloud__c, BCPQIB_Security_Policy_and_Access__c, BCPQIB_Storage_Area_Networking__c, BCPQIB_Tetration__c, BCPQIB_Unified_Communications__c, BCPQIB_Video_Collaboration__c, BCPQIB_Wireless_Networking__c, BCPQ_IB_Collaboration__c, BCPQ_IB_Core_Networking__c, BCPQ_IB_Data_Center__c, BCPQ_IB_Security__c, BCPQ_IB_SP_Mobility__c, CPQ_IB_Advanced_Threat__c, CPQ_IB_Application_Centric_Infra__c, CPQ_IB_Cloud_Meetings_and_Messaging__c, CPQ_IB_Computing_Systems__c, CPQ_IB_Customer_Care__c, CPQ_IB_Data_Center_Orchestration_Auto__c, CPQ_IB_Data_Center_Switching__c, CPQ_IB_Hosted_Collaboration_Solution__c, CPQ_IB_Mobility_Policy_and_Access__c, CPQ_IB_Network_Management_Orchestration__c, CPQ_IB_Network_Security__c, CPQ_IB_Next_Gen_Cable_Access__c, CPQ_IB_Optical_Networking__c, CPQ_IB_Packet_Core__c, CPQ_IB_Routing_and_Switching__c, CPQ_IB_Security_Cloud__c, CPQ_IB_Security_Policy_and_Access__c, CPQ_IB_Storage_Area_Networking__c, CPQ_IB_Tetration__c, CPQ_IB_Unified_Communications__c, CPQ_IB_Video_Collaboration__c, CPQ_IB_Wireless_Networking__c, CPQ_IB_Collaboration__c, CPQ_IB_Core_Networking__c, CPQ_IB_Data_Center__c, CPQ_IB_Security__c, CPQ_IB_SP_Mobility__c,SBQQ__Quote__c FROM Contract where CPQAST_Universal_Id__c in: s_contractUIds];
+
+                    if(l_contractDets != null && l_contractDets.size() > 0){
+                        for (Contract c: l_contractDets) {
+                            mp_uniId_conDets.put(c.CPQAST_Universal_Id__c, c);
+                          }
+                    }   
+                }
+            }
+
+        }
+
+        //update the incremental Quotes
+        Map < Sobject, Sobject > mp_QuoteContract = new Map < Sobject, Sobject > ();
+        if(l_ordersForIncreQt != null && l_ordersForIncreQt.size() > 0){
+            for(Order o : l_ordersForIncreQt){
+                system.debug(o);
+                system.debug(o.SBQQ__Quote__c);
+                system.debug(mp_IncremetnalQuotes);
+                if(mp_IncremetnalQuotes.containsKey(o.SBQQ__Quote__c)){
+                    SBQQ__Quote__c qt = mp_IncremetnalQuotes.get(o.SBQQ__Quote__c);
+                    system.debug(qt);
+                    system.debug(qt.CPQAST_Universal_Id__c);
+                    system.debug(mp_uniId_conDets);
+                    if(mp_uniId_conDets.containsKey(qt.CPQAST_Universal_Id__c)){
+                        Contract cont = mp_uniId_conDets.get(qt.CPQAST_Universal_Id__c);
+                        system.debug(cont);
+                        mp_QuoteContract.put(qt, cont);
+                    }
+                }
+            }
+        }
+        //user Generaic Twin field framework
+        system.debug(mp_QuoteContract);
+        BIZ_GenericTwinField stw = new BIZ_GenericTwinField(mp_QuoteContract, 'SBQQ__Quote__c', 'Contract', s_fieldsToCopy);
+        BIZ_GenericTwinField.RespDTO resp = stw.copydata();
+        Map < SObject, SObject > source_dest_Sobject = (Map < SObject, SObject > ) resp.op; 
+        List<Contract> l_updateContractdata  =  (List < Contract > ) source_dest_Sobject.values();
+        system.debug(source_dest_Sobject);
+        //list of updated Incremental Contract
+        List<Contract> list_updateRenParentCons  = new List<Contract>();
+        
+        //update the Incremental contract based on Quote_IB_field__mdt
+        set<id> s_incrementalSubscriptions = new set<id>();
+        if(l_updateContractdata != null && l_updateContractdata.size() > 0){
+            for(Contract c: l_updateContractdata){
+                s_incrementalSubscriptions.add(c.SBQQ__Quote__c);
+                Double contractField = 0.0;
+                Double quoteField = 0.0;
+                system.debug(mp_IncremetnalQuotes);
+                SBQQ__Quote__c quote = mp_IncremetnalQuotes.get(c.SBQQ__Quote__c);
+                system.debug(quote);
+                for (Quote_IB_field__mdt quoteIBField: quoteIBFields) {
+                    if(quoteIBField.Name__c!=null){
+                        if (c.get(quoteIBField.Name__c) != null) {
+                        contractField = (Double) c.get(quoteIBField.Name__c);
+                        }
+
+                        if (quote!=null && quote.get(quoteIBField.Name__c) != null) {
+                        quoteField = (Double) quote.get(quoteIBField.Name__c);
+                        }
+
+                        if (contractField != null && quoteField != null) {
+                        c.put(quoteIBField.Name__c, contractField + quoteField);
+                        } else if (contractField != null && quoteField == 0.0) {
+                        c.put(quoteIBField.Name__c, contractField);
+                        } else if (contractField == 0.0 && quoteField != null) {
+                        c.put(quoteIBField.Name__c, quoteField);
+                        }
+                    }    
+                }
+            }
+        }
+        
+        if(list_ordersRenewal != null && list_ordersRenewal.size() > 0){
+            //US585143 : Fetch the parent contracts of renewal for update            
+            list_updateRenParentCons = CPQ_OrderProcessorHelper.renewalchecksUpdate(list_ordersRenewal); 
+        }
+        if(l_updateContractdata != null && l_updateContractdata.size() > 0){
+            list_updateRenParentCons.addAll(l_updateContractdata);
+		}
+        if(list_updateRenParentCons != null && list_updateRenParentCons.size() > 0){
+            //update the contract
+            try{
+                update list_updateRenParentCons;
+            }
+            catch(Exception e){
+                system.debug('Exception during updating Contract'+e);
+                String ex_id = CPQ_OrderProcessorHelper.insertExceptionLog('CPQ_OrderProcessor',e.getMessage());
+                String stack_trace = e.getStackTraceString();
+                s_exceptionLogIds.add(ex_Id);
+                s_exceptionLogIds.add(stack_trace);
+            }
+        }
+
+        //insert Subscriptions
+        //US579173- Included in l_incrementalQL -BCS-Upsell condition and Existing=false- Modhurima 11/24/21
+        list<SBQQ__QuoteLine__c> l_incrementalQL = new list<SBQQ__QuoteLine__c> ();
+        if(!Test.isRunningTest()){ //!Test.isRunningTest()
+            system.debug(s_incrementalSubscriptions);
+            l_incrementalQL = [SELECT Id, SBQQ__Product__c, SBQQ__Discount__c, SBQQ__StartDate__c, SBQQ__EndDate__c, CPQ_Subscription_Term__c, CPQ_Displayed_List_Price__c, CPQ_Displayed_Net_Price__c, CPQ_Deliverable_Cost__c, SBQQ__Quantity__c, CPQ_Contract_Number__c, CPQ_Contract_Start_Date__c, CPQ_Contract_End_Date__c,SBQQ__Quote__r.SBQQ__Account__c,SBQQ__Quote__c FROM SBQQ__QuoteLine__c WHERE SBQQ__Quote__c =:s_quoteIdsForIncremental AND ((SBQQ__Quote__r.CPQAST_Estimate_Type__c = 'EC' and SBQQ__Existing__c = false) or (SBQQ__Quote__r.CPQAST_Estimate_Type__c = 'BCS' and SBQQ__Quote__r.CPQ_Quote_Type__c = 'Upsell/Change Request'  and SBQQ__Existing__c = false))]; // s_quoteIdsForIncremental s_incrementalSubscriptions
+        }
+        else{
+            l_incrementalQL = [SELECT Id, SBQQ__Product__c, SBQQ__Discount__c, SBQQ__StartDate__c, SBQQ__EndDate__c, CPQ_Subscription_Term__c, CPQ_Displayed_List_Price__c, CPQ_Displayed_Net_Price__c, CPQ_Deliverable_Cost__c, SBQQ__Quantity__c, CPQ_Contract_Number__c, CPQ_Contract_Start_Date__c, CPQ_Contract_End_Date__c,SBQQ__Quote__r.SBQQ__Account__c,SBQQ__Quote__c FROM SBQQ__QuoteLine__c];
+        }
+        //create map of Quote Id and Subscriptions
+        Map < id, list<SBQQ__QuoteLine__c>> mp_quote_subs = new Map < id, list<SBQQ__QuoteLine__c>> ();
+        system.debug('l_incrementalQL'+l_incrementalQL);
+        if(Test.isRunningTest()){
+            list<SBQQ__QuoteLine__c> l_lines = [select SBQQ__Quote__r.BCS_Order_ID__c,SBQQ__Quote__r.CPQAST_Estimate_Type__c , SBQQ__Existing__c from SBQQ__QuoteLine__c];
+            system.debug(l_lines);
+        }
+        if(l_incrementalQL != null && l_incrementalQL.size() > 0){
+            List < SBQQ__Subscription__c > contractLineItems = new  List < SBQQ__Subscription__c > ();
+            for(SBQQ__QuoteLine__c ql : l_incrementalQL){
+                if(mp_quote_subs.containsKey(ql.SBQQ__Quote__c)){
+                    list<SBQQ__QuoteLine__c> tempQLs = mp_quote_subs.get(ql.SBQQ__Quote__c);
+                    tempQLs.add(ql);
+                    mp_quote_subs.put(ql.SBQQ__Quote__c, tempQLs);
+                }
+                else{
+                    list<SBQQ__QuoteLine__c> tempQLs = new list<SBQQ__QuoteLine__c> ();
+                    tempQLs.add(ql);
+                    mp_quote_subs.put(ql.SBQQ__Quote__c, tempQLs);
+                }
+            }   
+
+            for(Contract c: l_updateContractdata){
+                //if(mp_quote_subs.containsKey(c.SBQQ__Quote__c) && mp_quote_subs.containsKey(c.SBQQ__Quote__c) !=null && mp_quote_subs.get(c.SBQQ__Quote__c).size() > 0){
+                if(mp_uniId_quote.containskey(c.CPQAST_Universal_Id__c) && mp_uniId_quote.get(c.CPQAST_Universal_Id__c).Id !=null && mp_quote_subs.containskey(mp_uniId_quote.get(c.CPQAST_Universal_Id__c).Id)){
+                    //for(SBQQ__QuoteLine__c items : mp_quote_subs.get(c.SBQQ__Quote__c)){
+                    for(SBQQ__QuoteLine__c items : mp_quote_subs.get(mp_uniId_quote.get(c.CPQAST_Universal_Id__c).Id)){
+                        SBQQ__Subscription__c sub = new SBQQ__Subscription__c();
+                        sub.SBQQ__QuoteLine__c = items.Id;
+                        sub.SBQQ__Quantity__c = items.SBQQ__Quantity__c;
+                        sub.SBQQ__Product__c = items.SBQQ__Product__c;
+                        sub.SBQQ__Discount__c = items.SBQQ__Discount__c;
+                        sub.SBQQ__SubscriptionStartDate__c = items.SBQQ__StartDate__c;
+                        sub.SBQQ__SubscriptionEndDate__c = items.SBQQ__EndDate__c;
+                        //sub.SBQQ__Account__c = quote.SBQQ__Account__c;
+                        sub.SBQQ__Account__c = items.SBQQ__Quote__r.SBQQ__Account__c;
+                        sub.CPQ_Subscription_Term__c = items.CPQ_Subscription_Term__c;
+                        sub.CPQ_Displayed_List_Price__c = items.CPQ_Displayed_List_Price__c;
+                        sub.CPQ_Displayed_Net_Price__c = items.CPQ_Displayed_Net_Price__c;
+                        sub.CPQ_Deliverable_Cost__c = items.CPQ_Deliverable_Cost__c;
+                        sub.SBQQ__Contract__c = c.Id;
+                        sub.CPQ_Contract_Number__c = items.CPQ_Contract_Number__c;
+                        sub.CPQ_Contract_Start_Date__c = items.CPQ_Contract_Start_Date__c;
+                        sub.CPQ_Contract_End_Date__c = items.CPQ_Contract_End_Date__c;
+                        contractLineItems.add(sub);
+                    }
+                }
+            }
+
+            if(contractLineItems.size() > 0){
+                try{
+                    insert contractLineItems;
+                }
+                catch(Exception e){
+                    system.debug('Exception during updating Contract'+e);
+                    String ex_id = CPQ_OrderProcessorHelper.insertExceptionLog('CPQ_OrderProcessor',e.getMessage());
+                    String stack_trace = e.getStackTraceString();
+                    s_exceptionLogIds.add(ex_Id);
+                    s_exceptionLogIds.add(stack_trace);
+                }
+            }
+        }
+
+    }
+
+    public void finish(Database.BatchableContext BC){  
+        if(s_exceptionLogIds.size() > 0){
+            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+            String[] toAddresses = new String[] {}; 
+            toAddresses.add(system.label.BCS_OrderProcessorErrorEmail);
+            mail.setToAddresses(toAddresses);
+            mail.setSubject('Error during CPQ_OrderProcessor run');
+            mail.setHtmlBody('Exception Log Ids'+s_exceptionLogIds);
+            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
+        }
+    }
+}

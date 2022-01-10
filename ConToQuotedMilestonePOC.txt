@@ -1,0 +1,136 @@
+public with sharing class ConToQuotedMilestonePOC {
+public static void contractToQuoteMilestone(List<SBQQ__Quote__c> newquotes){
+        List<String> uids = new List<String>();
+    	Set<Id> contractId = new Set<Id>();
+    	Map<Id, CPQAST_Contract_Milestone__c> ConDeliverable_conMilestoneMap = new Map<Id, CPQAST_Contract_Milestone__c>();
+        system.debug('New QuoteList-->'+newquotes);
+        try{
+            if(newquotes !=null){
+                system.debug('inside if newquotes not null');
+                for(SBQQ__Quote__c c:newquotes){
+                    if(c.CPQ_Quote_Type__c == 'Upsell/Change Request' && c.CPQAST_Estimate_Type__c == 'AST' ){
+                        uids.add(c.CPQ_Original_Universal_ID__c); 
+                    }
+                }  
+                system.debug('uids-->'+uids.size());   
+            }
+            List<Contract> contracttoiterate = [Select id,CPQAST_Universal_Id__c from Contract where CPQAST_Universal_Id__c IN:uids];
+            
+            List<Contract> contracttoupdate = new List<Contract>();
+            Map<String, Contract> UIDContractMap = new Map<String, Contract>(); 
+            Map<Id, CPQAST_Contract_Milestone__c> conContractMilestoneMap = new Map<Id, CPQAST_Contract_Milestone__c>(); 
+            
+            if(uids.size() > 0){
+                system.debug('new Quotes-->'+newquotes);
+                system.debug('contracttoiterate-->'+contracttoiterate);
+                
+                for(Contract con : [Select id,SBQQ__Quote__c,CPQAST_Universal_Id__c,CPQ_Contract_End_Date__c from Contract where CPQAST_Universal_Id__c IN:uids]) { 
+                    UIDContractMap.put(con.SBQQ__Quote__c, con); 
+                    contractId.add(con.Id);
+                    system.debug('contract con object->'+con);
+                }
+                system.debug('contract Id->'+contractId);
+                
+                List<SBQQ__Subscription__c> l_sub = [select id, SBQQ__QuoteLine__c from SBQQ__Subscription__c where SBQQ__Contract__c IN : contractId];
+             //   List<CPQAST_Contract_Milestone__c> CMList = [select id, CPQAST_Milestone_Discount__c,CurrencyIsoCode,CPQAST_Contract__r.SBQQ__Quote__c,CPQAST_Type__c,CPQAST_Milestone_Name__c,CPQAST_Description__c, CPQAST_Contract__r.CPQ_Contract_End_Date__c from CPQAST_Contract_Milestone__c  where CPQAST_Contract__c IN : contractId];
+               	List<CPQAST_Contract_Milestone__c> CMList = [select id, CPQAST_Milestone_Discount__c,CurrencyIsoCode,CPQAST_Contract__r.SBQQ__Quote__c,CPQAST_Type__c,CPQAST_Milestone_Name__c,CPQAST_Description__c, CPQAST_Contract__r.CPQ_Contract_End_Date__c from CPQAST_Contract_Milestone__c  where CPQAST_Contract__r.CPQAST_Universal_Id__c IN : uids];
+                List<CPQAST_Contract_Milestone_Deliverable__c> CMDList = [select id, CPQAST_Subscription__c, CPQAST_Subscription__r.SBQQ__QuoteLine__c,CPQAST_Contract_Milestone__c,CPQAST_Milestone_Deliverable__c from CPQAST_Contract_Milestone_Deliverable__c where CPQAST_Subscription__c IN : l_sub];
+                List<CPQAST_Contract_Deliverable_Resource__c> CDRList = [select id,Subscription__c,Subscription__r.SBQQ__QuoteLine__c from CPQAST_Contract_Deliverable_Resource__c
+                                                                         where Subscription__c IN : l_sub];
+                    
+                 /*   for(CPQAST_Contract_Milestone_Deliverable__c CMDIterated : CMDList){
+                        ConDeliverable_conMilestoneMap(CMDIterated.Id, CMDIterated.CPQAST_Contract_Milestone__c);
+                    } */
+                
+                List<CPQAST_Quote_Milestone__c> quoteMilestonesToInsertList = new List<CPQAST_Quote_Milestone__c>();
+                
+                for(CPQAST_Contract_Milestone__c l_CM : CMList){
+                    if(l_CM.CPQAST_Contract__r.CPQ_Contract_End_Date__c != NULL){ // Considering Active Contracts only
+                    CPQAST_Quote_Milestone__c   createQM = new CPQAST_Quote_Milestone__c();
+                    createQM.CPQAST_Contract_Milestone__c = l_CM.Id; // Do we need to create lookup to contract Milestone
+                    createQM.CPQAST_Milestone_Name__c = l_CM.CPQAST_Milestone_Name__c;
+                        createQM.CPQAST_Description__c = l_CM.CPQAST_Description__c;
+                        createQM.CPQAST_Type__c = l_CM.CPQAST_Type__c;
+                        createQM.CPQAST_Quote__c = l_CM.CPQAST_Contract__r.SBQQ__Quote__c;
+                        createQM.CPQAST_Description__c = l_CM.CPQAST_Description__c;
+                        createQM.CPQAST_Duration__c = l_CM.CPQAST_Duration__c;
+                        createQM.CPQAST_Install_Site__c = l_CM.CPQAST_Install_Site__c;
+                        createQM.CPQAST_Milestone_Assumption__c = l_CM.CPQAST_Milestone_Assumption__c;
+                        createQM.CPQAST_Milestone_Discount__c = l_CM.CPQAST_Milestone_Discount__c;
+                        createQM.CPQAST_Milestone_Net_Margin__c = l_CM.CPQAST_Milestone_Net_Margin__c;
+                        createQM.CPQAST_Milestone_Net_Price__c = l_CM.CPQAST_Milestone_Net_Price__c;
+                        createQM.CPQAST_Milestone_Number__c = l_CM.CPQAST_Milestone_Number__c;
+						createQM.CPQAST_T0_Start__c = l_CM.CPQAST_T0_Start__c;
+                    createQM.CurrencyIsoCode = l_CM.CurrencyIsoCode;
+                    createQM.CPQAST_Milestone_Discount__c = l_CM.CPQAST_Milestone_Discount__c;	
+                    quoteMilestonesToInsertList.add(createQM);					   
+                }
+                }
+                try {
+                    insert quoteMilestonesToInsertList;
+                } catch (Exception e) {
+                    System.debug('Error' + e.getMessage());
+                }
+                
+                Map<Id, Id> ContractMSQuoteMS = new Map<Id, Id>();
+                for(CPQAST_Quote_Milestone__c l_QL : quoteMilestonesToInsertList){
+                    ContractMSQuoteMS.put(l_QL.CPQAST_Contract_Milestone__c,l_QL.Id);
+                }
+                
+                List<CPQAST_Milestone_Deliverable__c> MDeliverableToInsertList = new List<CPQAST_Milestone_Deliverable__c>();
+                
+                
+                for(CPQAST_Contract_Milestone_Deliverable__c l_CMD : CMDList){
+                    if(l_CMD.CPQAST_Subscription__r.SBQQ__Contract__r.CPQ_Contract_End_Date__c != NULL){  // Considering Active Contracts only
+                    CPQAST_Milestone_Deliverable__c createQMD = new CPQAST_Milestone_Deliverable__c();
+                        createQMD.CPQAST_Contract_Milestone_Deliverable__c = l_CMD.Id; // Do we need to create lookup to contract Milestone Deliverable
+                        createQMD.CPQAST_Quote_Line__c = l_CMD.CPQAST_Subscription__r.SBQQ__QuoteLine__c; 
+                        createQMD.CPQAST_Quote_Milestone__c = ContractMSQuoteMS.get(l_CMD.CPQAST_Contract_Milestone__c);
+
+                    MDeliverableToInsertList.add(createQMD);					   
+                }
+                }
+                try {
+                    insert MDeliverableToInsertList;
+                } catch (Exception e) {
+                    System.debug('Error' + e.getMessage());
+                }
+                
+                Map<Id, Id> SubscriptionMilestoneD_Map = new Map<Id,Id>();
+                
+                for(CPQAST_Contract_Milestone_Deliverable__c cmdinserted : CMDList){
+                    SubscriptionMilestoneD_Map.put(cmdinserted.CPQAST_Subscription__c,cmdinserted.CPQAST_Milestone_Deliverable__c);
+                }
+                
+                List<CPQAST_Deliverable_Resource__c> ResourceToInsertList = new List<CPQAST_Deliverable_Resource__c>();
+                
+                for(CPQAST_Contract_Deliverable_Resource__c l_CDR : CDRList){
+                    if(l_CDR.Subscription__r.SBQQ__Contract__r.CPQ_Contract_End_Date__c != NULL){  // Considering Active Contracts only
+                   	CPQAST_Deliverable_Resource__c   createDR = new CPQAST_Deliverable_Resource__c();
+                    createDR.CPQAST_Contract_Deliverable_Resource__c = l_CDR.Id;// Do we need to create lookup to contract Deliverable Resource
+                    createDR.CPQ_QuoteLine__c = l_CDR.Subscription__r.SBQQ__QuoteLine__c;
+                    createDR.CPQAST_Milestone_Deliverable__c = SubscriptionMilestoneD_Map.get(l_CDR.Subscription__c); // ??
+                    ResourceToInsertList.add(createDR);					   
+                }
+                }
+                try {
+                    insert ResourceToInsertList;
+                } catch (Exception e) {
+                    System.debug('Error' + e.getMessage());
+                }
+                
+                
+            }
+        }
+        catch(exception e){
+            System.debug('Get Message'+e.getMessage());
+            BCS_IntegrationCreateLog.createLog('', '', '', '', '', 'ConToQuotedMilestonePOC.contractToQuoteMilestone', 
+                                               e.getMessage(), string.valueOf(e.getLineNumber()));
+            
+        }
+    }
+}
+
+//CPQAST_Deliverable_Resource__c --> CPQAST_Contract_Deliverable_Resource__c
+//CPQAST_Milestone_Deliverable__c -->CPQAST_Contract_Milestone_Deliverable__c
+//CPQAST_Quote_Milestone__c --> CPQAST_Contract_Milestone__c
